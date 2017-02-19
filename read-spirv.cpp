@@ -65,13 +65,13 @@ std::ostream & operator << (std::ostream & out, const sampler_type & type)
     }
     switch(type.dim)
     {
-    case spv::Dim::Dim1D: out << "sampler1D"; break;
-    case spv::Dim::Dim2D: out << "sampler2D"; break;
-    case spv::Dim::Dim3D: out << "sampler3D"; break;
-    case spv::Dim::Cube: out << "samplerCube"; break;
-    case spv::Dim::Rect: out << "sampler2DRect"; break;
-    case spv::Dim::Buffer: out << "samplerBuffer"; break;
-    case spv::Dim::SubpassData: out << "samplerSubpassData"; break;
+    case Dim::Dim1D: out << "sampler1D"; break;
+    case Dim::Dim2D: out << "sampler2D"; break;
+    case Dim::Dim3D: out << "sampler3D"; break;
+    case Dim::Cube: out << "samplerCube"; break;
+    case Dim::Rect: out << "sampler2DRect"; break;
+    case Dim::Buffer: out << "samplerBuffer"; break;
+    case Dim::SubpassData: out << "samplerSubpassData"; break;
     }
     if(type.is_multisampled) out << "MS";
     if(type.is_array) out << "Array";
@@ -90,8 +90,7 @@ int main() try
     {
         std::cout << "Information for " << file << ":\n\n";
         auto words = load_spirv_binary(file);
-        auto mod = spv::load_module(words.data(), words.size());
-        auto interface = get_module_interface(mod);
+        auto interface = get_module_interface(words.data(), words.size());
 
         for(auto & u : interface.uniforms)
         {           

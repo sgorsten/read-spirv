@@ -2,11 +2,9 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="read-spirv.cpp" />
-    <ClCompile Include="spirv.cpp" />
     <ClCompile Include="spirv-interface.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="spirv.h" />
     <ClInclude Include="spirv-interface.h" />
   </ItemGroup>
   <ItemGroup>

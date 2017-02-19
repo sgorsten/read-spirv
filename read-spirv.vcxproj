@@ -149,11 +149,9 @@
   <ItemGroup>
     <ClCompile Include="read-spirv.cpp" />
     <ClCompile Include="spirv-interface.cpp" />
-    <ClCompile Include="spirv.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="spirv-interface.h" />
-    <ClInclude Include="spirv.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="test.vert">

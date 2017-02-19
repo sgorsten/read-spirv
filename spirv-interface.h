@@ -1,8 +1,26 @@
 #pragma once
-
-#include "spirv.h"
+#include <string>
+#include <vector>
+#include <optional>
 #include <memory>
 #include <variant>
+
+enum class Dim {
+    Dim1D = 0,
+    Dim2D = 1,
+    Dim3D = 2,
+    Cube = 3,
+    Rect = 4,
+    Buffer = 5,
+    SubpassData = 6,
+};
+
+enum class AccessQualifier {
+    ReadOnly = 0,
+    WriteOnly = 1,
+    ReadWrite = 2,
+    Max = 0x7fffffff,
+};
 
 struct type;
 
@@ -32,11 +50,11 @@ struct struct_type
 struct sampler_type
 {
     numeric_type type;
-    spv::Dim dim;
+    Dim dim;
     bool is_multisampled;
     bool is_array;
     bool is_shadow;
-    std::optional<spv::AccessQualifier> access;
+    std::optional<AccessQualifier> access;
 };
 
 struct type : std::variant<numeric_type, array_type, struct_type, sampler_type>
@@ -79,4 +97,4 @@ struct module_interface
     std::vector<entry_point_info> entry_points;
 };
 
-module_interface get_module_interface(const spv::module & mod);
+module_interface get_module_interface(const uint32_t * words, size_t word_count);
