@@ -1,5 +1,11 @@
 #include "spirv-interface.h"
 #include <vulkan/spirv.hpp11>
+#include <unordered_map>
+#include <algorithm>
+
+////////////////////////////////////
+// DOM for the SPIR-V file format //
+////////////////////////////////////
 
 namespace
 {
@@ -15,7 +21,6 @@ namespace
         std::string                         string;             // Contents of string literal value
         std::vector<uint32_t>               words;              // Contents of arbitrary-sized literal value
                                                             
-    
         spv::ExecutionModel                 execution_model;    // Literal enum value
         spv::StorageClass                   storage_class;      // Literal enum value
         spv::Dim                            dim;                // Literal enum value
@@ -30,11 +35,51 @@ namespace
         uint32_t version_number, generator_id, schema_id;
         std::vector<instruction> instructions;
 
-        const instruction & get_instruction(uint32_t result_id) const;
-        const char * get_name(uint32_t result_id) const;
-        const char * get_member_name(uint32_t result_id, size_t index) const;
-        bool get_decoration(uint32_t result_id, spv::Decoration decoration, size_t size, void * data) const;
-        bool get_member_decoration(uint32_t result_id, size_t index, spv::Decoration decoration, size_t size, void * data) const;
+        const instruction & get_instruction(uint32_t result_id) const 
+        { 
+            for(auto & i : instructions) if(i.result_id == result_id) return i; 
+            throw std::logic_error("bad id"); 
+        }
+
+        const char * get_name(uint32_t result_id) const 
+        { 
+            for(auto & i : instructions) if(i.op_code == spv::Op::OpName && i.ids[0] == result_id) return i.string.c_str(); 
+            throw std::logic_error("no name");
+        }
+
+        const char * get_member_name(uint32_t result_id, size_t index) const
+        {
+            for(auto & i : instructions) if(i.op_code == spv::Op::OpMemberName && i.ids[0] == result_id && i.nums[0] == index) return i.string.c_str(); 
+            throw std::logic_error("no name");
+        }
+
+        bool get_decoration(uint32_t result_id, spv::Decoration decoration, size_t size, void * data) const
+        {
+            for(auto & i : instructions) 
+            {
+                if(i.op_code == spv::Op::OpDecorate && i.ids[0] == result_id && i.decoration == decoration)
+                {
+                    if(size != i.words.size()*4) throw std::logic_error("insufficient decoration data");
+                    memcpy(data, i.words.data(), size);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool get_member_decoration(uint32_t result_id, size_t index, spv::Decoration decoration, size_t size, void * data) const
+        {
+            for(auto & i : instructions) 
+            {
+                if(i.op_code == spv::Op::OpMemberDecorate && i.ids[0] == result_id && i.nums[0] == index && i.decoration == decoration)
+                {
+                    if(size != i.words.size()*4) throw std::logic_error("insufficient decoration data");
+                    memcpy(data, i.words.data(), size);
+                    return true;
+                }
+            }
+            return false;
+        }
     };
 
     enum class part
@@ -60,20 +105,11 @@ namespace
         part_info(part p) : p{p}, i{0} {}
         part_info(part p, int i) : p{p}, i{i} {}
     };
-    struct op_code_info { spv::Op op_code; std::vector<part_info> parts; } op_code_infos[]
+    const std::unordered_map<spv::Op, std::vector<part_info>> op_code_infos
     {
-        {spv::Op::OpNop, {}},
-        {spv::Op::OpUndef, {{part::id,0}, part::result_id}},
-        {spv::Op::OpSourceContinued, {part::string}},
-        // OpSource    
-        {spv::Op::OpSourceExtension, {part::string}},
         {spv::Op::OpName, {{part::id,0}, part::string}},
         {spv::Op::OpMemberName, {{part::id,0}, {part::num,0}, part::string}}, // type, member, name
-        {spv::Op::OpString, {part::result_id, part::string}},
-        {spv::Op::OpLine, {{part::id,0}, {part::num,0}, {part::num,1}}}, // file, line, column
-        // ...
         {spv::Op::OpEntryPoint, {part::execution_model, {part::id,0}, part::string, part::id_list}}, //id0=function, id_list=interfaces
-        // ...
         {spv::Op::OpTypeVoid, {part::result_id}},
         {spv::Op::OpTypeBool, {part::result_id}},
         {spv::Op::OpTypeInt, {part::result_id, {part::num,0}, {part::num,1}}},
@@ -88,30 +124,11 @@ namespace
         {spv::Op::OpTypeStruct, {part::result_id, part::id_list}},
         {spv::Op::OpTypeOpaque, {part::result_id, part::string}},
         {spv::Op::OpTypePointer, {part::result_id, part::storage_class, {part::id,0}}},
-        {spv::Op::OpTypeFunction, {part::result_id, {part::id,0}, part::id_list}},
-        {spv::Op::OpTypeEvent, {part::result_id}},
-        {spv::Op::OpTypeDeviceEvent, {part::result_id}},
-        {spv::Op::OpTypeReserveId, {part::result_id}},
-        {spv::Op::OpTypeQueue, {part::result_id}},
-        {spv::Op::OpTypeQueue, {part::result_id, part::access_qualifier}},
-        {spv::Op::OpTypeForwardPointer, {{part::id,0}, part::storage_class}},
-        {spv::Op::OpConstantTrue, {{part::id,0}, part::result_id}},
-        {spv::Op::OpConstantFalse, {{part::id,0}, part::result_id}},
         {spv::Op::OpConstant, {{part::id,0}, part::result_id, part::word_list}},
-        {spv::Op::OpConstantComposite, {{part::id,0}, part::result_id, part::id_list}},
-        // ...
-        {spv::Op::OpFunction, {{part::id,0}, part::result_id, part::function_control, {part::id,1}}}, //id0=result type, id1=function type
-        // ...
         {spv::Op::OpVariable, {{part::id,0}, part::result_id, part::storage_class, part::optional_id}},
-        // ...
         {spv::Op::OpDecorate, {{part::id,0}, part::decoration, part::word_list}},
         {spv::Op::OpMemberDecorate, {{part::id,0}, {part::num,0}, part::decoration, part::word_list}},
     };
-    const op_code_info * get_info(spv::Op op_code)
-    {
-        for(const auto & info : op_code_infos) if(info.op_code == op_code) return &info;
-        return nullptr;
-    }
 
     module load_module(const uint32_t * words, size_t word_count)
     {
@@ -134,10 +151,12 @@ namespace
             const uint32_t op_code_length = *it >> 16;
             const uint32_t * op_code_end = it + op_code_length;
             if(op_code_end > binary_end) throw std::runtime_error("incomplete opcode");
-            if(const op_code_info * info = get_info(inst.op_code))
+
+            auto it_info = op_code_infos.find(inst.op_code);
+            if(it_info != op_code_infos.end())
             {
                 ++it;
-                for(const part_info & p : info->parts) switch(p.p)
+                for(const part_info & p : it_info->second) switch(p.p)
                 {
                 default:                            throw std::logic_error("unsupported instruction part");
                 case part::result_id:               inst.result_id = *it++; break;
@@ -172,76 +191,17 @@ namespace
     }
 }
 
-/////////////
-// Parsing //
-/////////////
-
-const instruction & module::get_instruction(uint32_t result_id) const 
-{ 
-    for(auto & i : instructions)
-    {
-        if(i.result_id == result_id) return i; 
-    }
-    throw std::logic_error("bad id"); 
-}
-
-const char * module::get_name(uint32_t result_id) const 
-{ 
-    for(auto & i : instructions) 
-    {
-        if(i.op_code == spv::Op::OpName && i.ids[0] == result_id) return i.string.c_str(); 
-    }
-    throw std::logic_error("no name");
-}
-
-const char * module::get_member_name(uint32_t result_id, size_t index) const
-{
-    for(auto & i : instructions) 
-    {
-        if(i.op_code == spv::Op::OpMemberName && i.ids[0] == result_id && i.nums[0] == index) return i.string.c_str(); 
-    }
-    throw std::logic_error("no name");
-}
-
-bool module::get_decoration(uint32_t result_id, spv::Decoration decoration, size_t size, void * data) const
-{
-    for(auto & i : instructions) 
-    {
-        if(i.op_code == spv::Op::OpDecorate && i.ids[0] == result_id && i.decoration == decoration)
-        {
-            if(size != i.words.size()*4) throw std::logic_error("insufficient decoration data");
-            memcpy(data, i.words.data(), size);
-            return true;
-        }
-    }
-    return false;
-}
-
-bool module::get_member_decoration(uint32_t result_id, size_t index, spv::Decoration decoration, size_t size, void * data) const
-{
-    for(auto & i : instructions) 
-    {
-        if(i.op_code == spv::Op::OpMemberDecorate && i.ids[0] == result_id && i.nums[0] == index && i.decoration == decoration)
-        {
-            if(size != i.words.size()*4) throw std::logic_error("insufficient decoration data");
-            memcpy(data, i.words.data(), size);
-            return true;
-        }
-    }
-    return false;
-}
-
 //////////////
 // Analysis //
 //////////////
 
-static numeric_type convert_numeric_type(const module & mod, const instruction & inst, uint32_t matrix_stride)
+static spvi::type::numeric convert_numeric_type(const module & mod, const instruction & inst, uint32_t matrix_stride)
 {
-    numeric_type element_type;
+    spvi::type::numeric element_type;
     switch(inst.op_code)
     {
-    case spv::Op::OpTypeFloat: return {numeric_type::float_, inst.nums[0], 1, 1, 0, 0};
-    case spv::Op::OpTypeInt: return {inst.nums[1] ? numeric_type::int_ : numeric_type::uint_, inst.nums[0], 1, 1};
+    case spv::Op::OpTypeFloat: return {spvi::type::float_, inst.nums[0], 1, 1, 0, 0};
+    case spv::Op::OpTypeInt: return {inst.nums[1] ? spvi::type::int_ : spvi::type::uint_, inst.nums[0], 1, 1};
     case spv::Op::OpTypeVector: 
         element_type = convert_numeric_type(mod, mod.get_instruction(inst.ids[0]), matrix_stride);
         element_type.row_count = inst.nums[0];
@@ -281,11 +241,11 @@ static size_t decode_array_length(const module & mod, const instruction & inst)
     }
 }
 
-type convert_type(const module & mod, const instruction & inst, uint32_t matrix_stride)
+static spvi::type convert_type(const module & mod, const instruction & inst, uint32_t matrix_stride)
 {
     if(inst.op_code == spv::Op::OpTypeStruct)
     {
-        struct_type r {mod.get_name(inst.result_id)};
+        spvi::type::structure r {mod.get_name(inst.result_id)};
         for(size_t i=0; i<inst.var_ids.size(); ++i)
         {
             // Note: Input/output structs might not have a physical layout, so Offset may not always be present
@@ -296,7 +256,7 @@ type convert_type(const module & mod, const instruction & inst, uint32_t matrix_
             mod.get_member_decoration(inst.result_id, i, spv::Decoration::MatrixStride, sizeof(matrix_stride), &matrix_stride);
             r.members.push_back({mod.get_member_name(inst.result_id, i), convert_type(mod, mod.get_instruction(inst.var_ids[i]), matrix_stride), opt_offset});
         }
-        return r;    
+        return {r};    
     }
 
     if(inst.op_code == spv::Op::OpTypeArray)
@@ -304,7 +264,7 @@ type convert_type(const module & mod, const instruction & inst, uint32_t matrix_
         // Note: Input/output arrays might not have a physical layout, so ArrayStride may not always be present
         std::optional<size_t> opt_stride; uint32_t stride;
         if(mod.get_decoration(inst.result_id, spv::Decoration::ArrayStride, sizeof(stride), &stride)) opt_stride = stride;
-        return array_type{std::make_unique<type>(convert_type(mod, mod.get_instruction(inst.ids[0]), matrix_stride)), decode_array_length(mod, mod.get_instruction(inst.ids[1])), opt_stride};
+        return {spvi::type::array{convert_type(mod, mod.get_instruction(inst.ids[0]), matrix_stride), decode_array_length(mod, mod.get_instruction(inst.ids[1])), opt_stride}};
     }
 
     if(inst.op_code == spv::Op::OpTypeSampledImage)
@@ -312,61 +272,93 @@ type convert_type(const module & mod, const instruction & inst, uint32_t matrix_
         auto image_inst = mod.get_instruction(inst.ids[0]);
         if(image_inst.op_code != spv::Op::OpTypeImage) throw std::logic_error("not an image type");
 
-        sampler_type s {};
-        s.type = convert_numeric_type(mod, mod.get_instruction(image_inst.ids[0]), 0);
-        s.dim = static_cast<Dim>(image_inst.dim);
+        spvi::type::sampler s {};
+        s.channel_kind = convert_numeric_type(mod, mod.get_instruction(image_inst.ids[0]), 0).elem_kind;
+        const bool is_array = image_inst.nums[1] == 1;
+        switch(image_inst.dim)
+        {
+        case spv::Dim::Dim1D: s.view_type = is_array ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D; break;
+        case spv::Dim::Dim2D: s.view_type = is_array ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D; break;
+        case spv::Dim::Dim3D: s.view_type = VK_IMAGE_VIEW_TYPE_3D; break;
+        case spv::Dim::Cube: s.view_type = is_array ? VK_IMAGE_VIEW_TYPE_CUBE_ARRAY : VK_IMAGE_VIEW_TYPE_CUBE; break;
+        default: throw std::logic_error("unsupported image Dim"); break;
+        }
         if(image_inst.nums[2] == 1) s.is_multisampled = true;
-        if(image_inst.nums[1] == 1) s.is_array = true;
         if(image_inst.nums[0] == 1) s.is_shadow = true;
-        if(image_inst.access_qualifier) s.access = static_cast<AccessQualifier>(*image_inst.access_qualifier);
-        return s;
+        return {s};
     }
 
-    return convert_numeric_type(mod, inst, matrix_stride);
+    return {convert_numeric_type(mod, inst, matrix_stride)};
 }
 
-module_interface get_module_interface(const uint32_t * words, size_t word_count)
+static spvi::descriptor_set_info & get_set(std::vector<spvi::descriptor_set_info> & sets, uint32_t index)
+{
+    for(auto & set : sets) if(set.set == index) return set;
+    sets.push_back({index});
+    return sets.back();
+}
+
+spvi::module_info::module_info(const uint32_t * words, size_t word_count)
 {
     module mod = load_module(words, word_count);
 
-    size_t unnamed_count = 0;
-    module_interface iface;
     for(const auto & inst : mod.instructions)
     {
         // Uniform blocks have storage class Uniform and samplers have storage class UniformConstant
         if(inst.op_code == spv::Op::OpVariable && (inst.storage_class == spv::StorageClass::Uniform || inst.storage_class == spv::StorageClass::UniformConstant))
         {
-            auto type_inst = mod.get_instruction(inst.ids[0]);
-            if(type_inst.op_code != spv::Op::OpTypePointer) throw std::logic_error("uniform variable type is not a pointer");
+            uint32_t set, binding;
+            if(!mod.get_decoration(inst.result_id, spv::Decoration::DescriptorSet, sizeof(set), &set)) throw std::logic_error("missing set qualifier");
+            if(!mod.get_decoration(inst.result_id, spv::Decoration::Binding, sizeof(binding), &binding)) throw std::logic_error("missing binding qualifier");
 
-            uniform_info u {mod.get_name(inst.result_id), 0, 0, convert_type(mod, mod.get_instruction(type_inst.ids[0]), 0)};
-            if(u.name.empty()) u.name = "$" + std::to_string(unnamed_count++);
-            if(!mod.get_decoration(inst.result_id, spv::Decoration::DescriptorSet, sizeof(u.set), &u.set)) throw std::logic_error("missing set qualifier");
-            if(!mod.get_decoration(inst.result_id, spv::Decoration::Binding, sizeof(u.binding), &u.binding)) throw std::logic_error("missing binding qualifier");
-            iface.uniforms.push_back(std::move(u));
+            auto type_inst = mod.get_instruction(inst.ids[0]);
+            if(type_inst.op_code != spv::Op::OpTypePointer) throw std::logic_error("uniform variable type is not a pointer");           
+            get_set(descriptor_sets, set).descriptors.push_back({binding, convert_type(mod, mod.get_instruction(type_inst.ids[0]), 0), mod.get_name(inst.result_id)});
         }
 
         if(inst.op_code == spv::Op::OpEntryPoint)
         {
-            entry_point_info e {inst.string};
+            entry_point_info e;
+            switch(inst.execution_model)
+            {
+            case spv::ExecutionModel::Vertex: e.stage = VK_SHADER_STAGE_VERTEX_BIT; break;
+            case spv::ExecutionModel::TessellationControl: e.stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; break;
+            case spv::ExecutionModel::TessellationEvaluation: e.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; break;
+            case spv::ExecutionModel::Geometry: e.stage = VK_SHADER_STAGE_GEOMETRY_BIT; break;
+            case spv::ExecutionModel::Fragment: e.stage = VK_SHADER_STAGE_FRAGMENT_BIT; break;
+            case spv::ExecutionModel::GLCompute: e.stage = VK_SHADER_STAGE_COMPUTE_BIT; break;
+            default: throw std::logic_error("bad ExecutionModel");
+            }
+            e.name = inst.string;
             for(auto id : inst.var_ids)
             {
-                auto iface = mod.get_instruction(id);
+                // Skip over inputs/outputs without an explicit location (such as the BuiltIn block)
+                uint32_t location;
+                if(!mod.get_decoration(id, spv::Decoration::Location, sizeof(location), &location)) continue;
 
+                auto iface = mod.get_instruction(id);
                 auto type_inst = mod.get_instruction(iface.ids[0]);
                 if(type_inst.op_code != spv::Op::OpTypePointer) throw std::logic_error("interface variable type is not a pointer");
 
-                interface_info info {mod.get_name(id), 0, convert_type(mod, mod.get_instruction(type_inst.ids[0]), 0)};
-                if(!mod.get_decoration(iface.result_id, spv::Decoration::Location, sizeof(info.location), &info.location)) continue; // throw std::logic_error("missing location qualifier");
+                variable_info info {location, convert_type(mod, mod.get_instruction(type_inst.ids[0]), 0), mod.get_name(id)};
                 switch(iface.storage_class)
                 {
-                case spv::StorageClass::Input: e.inputs.push_back(std::move(info)); break;
-                case spv::StorageClass::Output: e.outputs.push_back(std::move(info)); break;
+                case spv::StorageClass::Input: e.inputs.push_back(info); break;
+                case spv::StorageClass::Output: e.outputs.push_back(info); break;
                 default: throw std::logic_error("bad storage class");
                 }
             }
-            iface.entry_points.push_back(std::move(e));
+            entry_points.push_back(std::move(e));
         }
     }
-    return iface;
+
+    std::sort(begin(descriptor_sets), end(descriptor_sets), [](auto & l, auto & r) { return l.set < r.set; });
+    for(auto & set : descriptor_sets) std::sort(begin(set.descriptors), end(set.descriptors), [](auto & l, auto & r) { return l.index < r.index; });
+
+    std::sort(begin(entry_points), end(entry_points), [](auto & l, auto & r) { return std::tie(l.stage, l.name) < std::tie(r.stage, r.name); });
+    for(auto & e : entry_points)
+    {
+        std::sort(begin(e.inputs), end(e.inputs), [](auto & l, auto & r) { return l.index < r.index; });
+        std::sort(begin(e.outputs), end(e.outputs), [](auto & l, auto & r) { return l.index < r.index; });
+    }
 }

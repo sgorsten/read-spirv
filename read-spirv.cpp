@@ -13,95 +13,111 @@ std::vector<uint32_t> load_spirv_binary(const char * path)
     return words;
 }
 
-std::ostream & operator << (std::ostream & out, const type & t);
+template<class T> struct indented { const T & value; int indent; };
 
-std::ostream & operator << (std::ostream & out, const numeric_type & type)
+std::ostream & operator << (std::ostream & out, indented<spvi::type> t);
+
+std::ostream & operator << (std::ostream & out, indented<spvi::type::numeric> t)
 {
-    if(type.row_count == 1 && type.column_count == 1)
+    if(t.value.row_count == 1 && t.value.column_count == 1)
     {
-        if(type.elem_kind == numeric_type::float_ && type.elem_width == 32) return out << "float";
-        if(type.elem_kind == numeric_type::float_ && type.elem_width == 64) return out << "double";
-        if(type.elem_kind == numeric_type::int_ && type.elem_width == 32) return out << "int";
-        if(type.elem_kind == numeric_type::uint_ && type.elem_width == 32) return out << "unsigned int";
+        if(t.value.elem_kind == spvi::type::float_ && t.value.elem_width == 32) return out << "float";
+        if(t.value.elem_kind == spvi::type::float_ && t.value.elem_width == 64) return out << "double";
+        if(t.value.elem_kind == spvi::type::int_ && t.value.elem_width == 32) return out << "int";
+        if(t.value.elem_kind == spvi::type::uint_ && t.value.elem_width == 32) return out << "unsigned int";
         throw std::logic_error("unsupported type");
     }
 
-    if(type.elem_kind == numeric_type::float_ && type.elem_width == 32) out << "";
-    else if(type.elem_kind == numeric_type::float_ && type.elem_width == 64) out << "d";
-    else if(type.elem_kind == numeric_type::int_ && type.elem_width == 32) out << "i";
-    else if(type.elem_kind == numeric_type::uint_ && type.elem_width == 32) out << "u";
+    if(t.value.elem_kind == spvi::type::float_ && t.value.elem_width == 32) out << "";
+    else if(t.value.elem_kind == spvi::type::float_ && t.value.elem_width == 64) out << "d";
+    else if(t.value.elem_kind == spvi::type::int_ && t.value.elem_width == 32) out << "i";
+    else if(t.value.elem_kind == spvi::type::uint_ && t.value.elem_width == 32) out << "u";
     else throw std::logic_error("unsupported type");
 
-    if(type.column_count == 1) return out << "vec" << type.row_count;
-    if(type.column_count == type.row_count) return out << "mat" << type.row_count;
-    return out << "mat" << type.column_count << 'x' << type.row_count;
+    if(t.value.column_count == 1) return out << "vec" << t.value.row_count;
+    if(t.value.column_count == t.value.row_count) return out << "mat" << t.value.row_count;
+    return out << "mat" << t.value.column_count << 'x' << t.value.row_count;
 }
 
-std::ostream & operator << (std::ostream & out, const array_type & type)
+std::ostream & operator << (std::ostream & out, indented<spvi::type::array> t)
 {
-    if(type.stride) out << "layout(stride=" << *type.stride << ") ";
-    return out << *type.elem_type << '[' << type.elem_count << ']';
-}
-
-std::ostream & operator << (std::ostream & out, const struct_type & type)
-{
-    out << "struct " << type.name << " {\n";
-    for(auto & m : type.members) 
-    {
-        out << "  ";
-        if(m.offset) out << "layout(offset=" << *m.offset << ") ";
-        out << m.name << " : " << m.member_type << std::endl;
-    }
-    return out << "}";
-}
-
-std::ostream & operator << (std::ostream & out, const sampler_type & type)
-{
-    //if(type.access) out << "[[" << get_string(*type.access) << "]] ";
-    switch(type.type.elem_kind)
-    {
-    case numeric_type::int_: out << 'i'; break;
-    case numeric_type::uint_: out << 'u'; break;
-    }
-    switch(type.dim)
-    {
-    case Dim::Dim1D: out << "sampler1D"; break;
-    case Dim::Dim2D: out << "sampler2D"; break;
-    case Dim::Dim3D: out << "sampler3D"; break;
-    case Dim::Cube: out << "samplerCube"; break;
-    case Dim::Rect: out << "sampler2DRect"; break;
-    case Dim::Buffer: out << "samplerBuffer"; break;
-    case Dim::SubpassData: out << "samplerSubpassData"; break;
-    }
-    if(type.is_multisampled) out << "MS";
-    if(type.is_array) out << "Array";
-    if(type.is_shadow) out << "Shadow";
+    out << indented<spvi::type>{t.value.elem_type,t.indent} << '[' << t.value.elem_count << ']';
+    if(t.value.stride) out << " /*stride=" << *t.value.stride << "*/";
     return out;
 }
 
-std::ostream & operator << (std::ostream & out, const type & t)
+std::ostream & operator << (std::ostream & out, indented<spvi::type::structure> t)
 {
-    return std::visit([&out](const auto & x) -> std::ostream & { return out << x; }, (const std::variant<numeric_type, array_type, struct_type, sampler_type> &)t);
+    out << "struct " << t.value.name << "\n" << std::string(t.indent,' ') << "{\n";
+    for(auto & m : t.value.members) 
+    {
+        out << std::string(t.indent+2,' ');
+        if(m.offset) out << "Offset " << *m.offset << " ";
+        out << m.name << " : " << indented<spvi::type>{m.member_type,t.indent+2} << std::endl;
+    }
+    return out << std::string(t.indent,' ') << "}";
+}
+
+std::ostream & operator << (std::ostream & out, indented<spvi::type::sampler> t)
+{
+    switch(t.value.channel_kind)
+    {
+    case spvi::type::int_: out << 'i'; break;
+    case spvi::type::uint_: out << 'u'; break;
+    }
+    switch(t.value.view_type)
+    {
+    case VK_IMAGE_VIEW_TYPE_1D: case VK_IMAGE_VIEW_TYPE_1D_ARRAY: out << "sampler1D"; break;
+    case VK_IMAGE_VIEW_TYPE_2D: case VK_IMAGE_VIEW_TYPE_2D_ARRAY: out << "sampler2D"; break;
+    case VK_IMAGE_VIEW_TYPE_3D: out << "sampler3D"; break;
+    case VK_IMAGE_VIEW_TYPE_CUBE: case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY: out << "samplerCube"; break;
+    }
+    if(t.value.is_multisampled) out << "MS";
+    if(t.value.view_type == VK_IMAGE_VIEW_TYPE_1D_ARRAY) out << "Array";
+    if(t.value.view_type == VK_IMAGE_VIEW_TYPE_2D_ARRAY) out << "Array";
+    if(t.value.view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) out << "Array";
+    if(t.value.is_shadow) out << "Shadow";
+    return out;
+}
+
+std::ostream & operator << (std::ostream & out, indented<spvi::type> t)
+{
+    std::visit([&](const auto & x) { out << indented<std::remove_cv_t<std::remove_reference_t<decltype(x)>>>{x,t.indent}; }, t.value.contents);
+    return out;
 }
 
 int main() try
 {
     for(auto file : {"test.vert.spv", "test.frag.spv"})
     {
-        std::cout << "Information for " << file << ":\n\n";
-        auto words = load_spirv_binary(file);
-        auto interface = get_module_interface(words.data(), words.size());
+        const spvi::module_info info(load_spirv_binary(file));
 
-        for(auto & u : interface.uniforms)
+        std::cout << "Module " << file << ":" << std::endl;
+        for(auto & desc_set : info.descriptor_sets)
         {           
-            std::cout << "layout(set = " << u.set << ", binding = " << u.binding << ") uniform " << u.name << " : " << u.uniform_type << std::endl;
+            std::cout << "  Descriptor set " << desc_set.set << ":" << std::endl;
+            for(auto & desc : desc_set.descriptors)
+            {
+                std::cout << "    Descriptor " << desc.index << " " << desc.name << " : " << indented<spvi::type>{desc.type,4} << std::endl;
+            }
         }
 
-        for(auto & e : interface.entry_points)
+        for(auto & e : info.entry_points)
         {
-            std::cout << "\nEntry point " << e.name << "(...):\n";
-            for(auto & i : e.inputs) std::cout << "  layout(location = " << i.location << ") in " << i.name << " : " << i.interface_type << std::endl;
-            for(auto & i : e.outputs) std::cout << "  layout(location = " << i.location << ") out " << i.name << " : " << i.interface_type << std::endl;
+            std::cout << "  ";
+            switch(e.stage)
+            {
+            case VK_SHADER_STAGE_VERTEX_BIT: std::cout << "Vertex"; break;
+            case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT: std::cout << "Tesselation control"; break;
+            case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT: std::cout << "Tesselation evaluation"; break;
+            case VK_SHADER_STAGE_GEOMETRY_BIT: std::cout << "Geometry"; break;
+            case VK_SHADER_STAGE_FRAGMENT_BIT: std::cout << "Fragment"; break;
+            case VK_SHADER_STAGE_COMPUTE_BIT: std::cout << "Compute"; break;
+            default: throw std::logic_error("bad shader stage");
+            }
+            std::cout << " shader " << e.name << "(...):\n";
+            for(auto & i : e.inputs) std::cout << "    Input " << i.index << " " << i.name << " : " << indented<spvi::type>{i.type,4} << std::endl;
+            for(auto & i : e.outputs) std::cout << "    Output " << i.index << " " << i.name << " : " << indented<spvi::type>{i.type,4} << std::endl;
         }
         std::cout << std::endl;
     }
