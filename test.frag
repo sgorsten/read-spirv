@@ -6,8 +6,8 @@ layout(set = 0, binding = 0) uniform per_scene
     mat4 u_view_proj_matrix;
 	vec3 u_eye_position;
 };
-layout(set = 0, binding = 1) uniform sampler2DShadow shadow_map;
-layout(set = 0, binding = 2) uniform sampler2D spotlight_cookie;
+layout(set = 0, binding = 1) uniform sampler2DShadow shadow_maps[4];
+layout(set = 0, binding = 5) uniform sampler2D spotlight_cookie;
 
 layout(set = 1, binding = 1) uniform sampler2D albedo_tex;
 layout(set = 1, binding = 2) uniform sampler2D normal_tex;

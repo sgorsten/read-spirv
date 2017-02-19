@@ -1,4 +1,4 @@
-#include "spirv.h"
+#include "spirv-interface.h"
 #include <iostream>
 
 std::vector<uint32_t> load_spirv_binary(const char * path)
@@ -13,88 +13,75 @@ std::vector<uint32_t> load_spirv_binary(const char * path)
     return words;
 }
 
-struct const_printer { const spv::module & mod; const spv::instruction & inst; };
-struct type_printer { const spv::module & mod; const spv::instruction & inst; size_t indent; };
+std::ostream & operator << (std::ostream & out, const type & t);
 
-std::ostream & operator << (std::ostream & out, const_printer t)
+std::ostream & operator << (std::ostream & out, const numeric_type & type)
 {
-    switch(t.inst.op_code)
+    if(type.row_count == 1 && type.column_count == 1)
     {
-    case spv::OpConstantTrue: return out << "true";
-    case spv::OpConstantFalse: return out << "false";
-    case spv::OpConstant:
-        auto type = t.mod.get_instruction(t.inst.ids[0]);
-        switch(type.op_code)
-        {
-        case spv::OpTypeInt:
-            switch(type.nums[1]) // signedness
-            {
-            case 0:
-                switch(type.nums[0]) // width
-                {
-                case 32: return out << reinterpret_cast<const int32_t &>(t.inst.words[0]);
-                case 64: return out << reinterpret_cast<const int64_t &>(t.inst.words[0]);
-                default: throw std::logic_error("unsupported width");
-                }
-            case 1:
-                switch(type.nums[0]) // width
-                {
-                case 32: return out << reinterpret_cast<const uint32_t &>(t.inst.words[0]);
-                case 64: return out << reinterpret_cast<const uint64_t &>(t.inst.words[0]);
-                default: throw std::logic_error("unsupported width");
-                }
-            default: throw std::logic_error("unsupported signedness");
-            }
-        case spv::OpTypeFloat:
-            switch(type.nums[0]) // width
-            {
-            case 32: return out << reinterpret_cast<const float &>(t.inst.words[0]);
-            case 64: return out << reinterpret_cast<const double &>(t.inst.words[0]);
-            default: throw std::logic_error("unsupported width");
-            }
-        default: throw std::logic_error("unsupported constant type");
-        }
+        if(type.elem_kind == numeric_type::float_ && type.elem_width == 32) return out << "float";
+        if(type.elem_kind == numeric_type::float_ && type.elem_width == 64) return out << "double";
+        if(type.elem_kind == numeric_type::int_ && type.elem_width == 32) return out << "int";
+        if(type.elem_kind == numeric_type::uint_ && type.elem_width == 32) return out << "unsigned int";
+        throw std::logic_error("unsupported type");
     }
-    return out << "?";
-};
 
-std::ostream & operator << (std::ostream & out, type_printer t)
+    if(type.elem_kind == numeric_type::float_ && type.elem_width == 32) out << "";
+    else if(type.elem_kind == numeric_type::float_ && type.elem_width == 64) out << "d";
+    else if(type.elem_kind == numeric_type::int_ && type.elem_width == 32) out << "i";
+    else if(type.elem_kind == numeric_type::uint_ && type.elem_width == 32) out << "u";
+    else throw std::logic_error("unsupported type");
+
+    if(type.column_count == 1) return out << "vec" << type.row_count;
+    if(type.column_count == type.row_count) return out << "mat" << type.row_count;
+    return out << "mat" << type.column_count << 'x' << type.row_count;
+}
+
+std::ostream & operator << (std::ostream & out, const array_type & type)
 {
-    uint32_t stride;
-    switch(t.inst.op_code)
+    if(type.stride) out << "layout(stride=" << *type.stride << ") ";
+    return out << *type.elem_type << '[' << type.elem_count << ']';
+}
+
+std::ostream & operator << (std::ostream & out, const struct_type & type)
+{
+    out << "struct " << type.name << " {\n";
+    for(auto & m : type.members) 
     {
-    case spv::OpTypeFloat: return out << "float<" << t.inst.nums[0] << '>';
-    case spv::OpTypeInt: return out << (t.inst.nums[1] ? "int<" : "uint<") << t.inst.nums[0] << '>';
-    case spv::OpTypeVector: return out << "vec<"  << type_printer{t.mod, t.mod.get_instruction(t.inst.ids[0]), t.indent} << ',' << t.inst.nums[0] << '>';
-    case spv::OpTypeMatrix: return out << "mat<"  << type_printer{t.mod, t.mod.get_instruction(t.inst.ids[0]), t.indent} << ',' << t.inst.nums[0] << '>';
-    case spv::OpTypeArray: 
-        if(t.mod.get_decoration(t.inst.result_id, spv::Decoration::ArrayStride, sizeof(stride), &stride)) out << "[[stride=" << stride << "]] ";
-        return out << "arr<"  << type_printer{t.mod, t.mod.get_instruction(t.inst.ids[0]), t.indent} << ',' << const_printer{t.mod, t.mod.get_instruction(t.inst.ids[1])} << '>';
-    case spv::OpTypePointer: return out << "ptr<" << type_printer{t.mod, t.mod.get_instruction(t.inst.ids[0]), t.indent} << '>';
-    case spv::OpTypeSampledImage: return out << "sampled<" << type_printer{t.mod, t.mod.get_instruction(t.inst.ids[0]), t.indent} << '>';
-    case spv::OpTypeImage: 
-        out << "image" << get_string(t.inst.dim);
-        if(t.inst.nums[2] == 1) out << "MS";
-        if(t.inst.nums[1] == 1) out << "Array";
-        if(t.inst.nums[0] == 1) out << "Shadow";
-        out << '<' << type_printer{t.mod, t.mod.get_instruction(t.inst.ids[0]), t.indent};
-        if(t.inst.access_qualifier) out << ',' << get_string(*t.inst.access_qualifier);
-        return out << '>';
-    case spv::OpTypeStruct:
-        out << "struct\n" << std::string(t.indent*2,' ') << "{\n";
-        for(size_t i=0; i<t.inst.var_ids.size(); ++i)
-        {
-            spv::BuiltIn built_in;
-            uint32_t offset, matrix_stride;            
-            out << std::string(t.indent*2+2,' ');
-            if(t.mod.get_member_decoration(t.inst.result_id, i, spv::Decoration::BuiltIn, sizeof(built_in), &built_in)) out << "[[" << get_string(built_in) << "]] ";
-            if(t.mod.get_member_decoration(t.inst.result_id, i, spv::Decoration::Offset, sizeof(offset), &offset)) out << "[[offset(" << offset << ")]] " ;
-            if(t.mod.get_member_decoration(t.inst.result_id, i, spv::Decoration::MatrixStride, sizeof(matrix_stride), &matrix_stride)) out << "[[matrix_stride(" << matrix_stride << ")]] ";
-            out << t.mod.get_member_name(t.inst.result_id, i) << " : " << type_printer{t.mod, t.mod.get_instruction(t.inst.var_ids[i]), t.indent+1} << std::endl;
-        }
-        return out << std::string(t.indent*2,' ') << "}";
-    default: return out << t.inst;
+        out << "  ";
+        if(m.offset) out << "layout(offset=" << *m.offset << ") ";
+        out << m.name << " : " << m.member_type << std::endl;
     }
+    return out << "}";
+}
+
+std::ostream & operator << (std::ostream & out, const sampler_type & type)
+{
+    //if(type.access) out << "[[" << get_string(*type.access) << "]] ";
+    switch(type.type.elem_kind)
+    {
+    case numeric_type::int_: out << 'i'; break;
+    case numeric_type::uint_: out << 'u'; break;
+    }
+    switch(type.dim)
+    {
+    case spv::Dim::Dim1D: out << "sampler1D"; break;
+    case spv::Dim::Dim2D: out << "sampler2D"; break;
+    case spv::Dim::Dim3D: out << "sampler3D"; break;
+    case spv::Dim::Cube: out << "samplerCube"; break;
+    case spv::Dim::Rect: out << "sampler2DRect"; break;
+    case spv::Dim::Buffer: out << "samplerBuffer"; break;
+    case spv::Dim::SubpassData: out << "samplerSubpassData"; break;
+    }
+    if(type.is_multisampled) out << "MS";
+    if(type.is_array) out << "Array";
+    if(type.is_shadow) out << "Shadow";
+    return out;
+}
+
+std::ostream & operator << (std::ostream & out, const type & t)
+{
+    return std::visit([&out](const auto & x) -> std::ostream & { return out << x; }, (const std::variant<numeric_type, array_type, struct_type, sampler_type> &)t);
 }
 
 int main() try
@@ -104,42 +91,18 @@ int main() try
         std::cout << "Information for " << file << ":\n\n";
         auto words = load_spirv_binary(file);
         auto mod = spv::load_module(words.data(), words.size());
+        auto interface = get_module_interface(mod);
 
-        std::cout << "Uniforms:\n";
-        for(const auto & inst : mod.instructions)
-        {
-            if(inst.op_code == spv::OpVariable && (inst.storage_class == spv::StorageClass::Uniform || inst.storage_class == spv::StorageClass::UniformConstant))
-            {
-                uint32_t set, binding;
-                std::cout << "  ";
-                if(mod.get_decoration(inst.result_id, spv::Decoration::DescriptorSet, sizeof(set), &set)) std::cout << "[[set(" << set << ")]] ";
-                if(mod.get_decoration(inst.result_id, spv::Decoration::Binding, sizeof(binding), &binding))  std::cout << "[[binding(" << binding << ")]] ";
-                auto name = mod.get_name(inst.result_id);
-                std::cout << (name[0] ? name : "$unnamed") << " : " << type_printer{mod, mod.get_instruction(inst.ids[0]), 1} << std::endl;
-            }
+        for(auto & u : interface.uniforms)
+        {           
+            std::cout << "layout(set = " << u.set << ", binding = " << u.binding << ") uniform " << u.name << " : " << u.uniform_type << std::endl;
         }
 
-        for(const auto & inst : mod.instructions)
+        for(auto & e : interface.entry_points)
         {
-            if(inst.op_code == spv::OpEntryPoint)
-            {
-                std::cout << "\nEntry point " << inst.string << "(...): " << std::endl;
-                for(auto id : inst.var_ids)
-                {
-                    auto iface = mod.get_instruction(id);
-                    std::cout << "  ";
-                    uint32_t location;
-                    if(mod.get_decoration(iface.result_id, spv::Decoration::Location, sizeof(location), &location)) std::cout << "[[location(" << location << ")]] ";
-                    switch(iface.storage_class)
-                    {
-                    case spv::StorageClass::Input: std::cout << "[[in]] "; break;
-                    case spv::StorageClass::Output: std::cout << "[[out]] "; break;
-                    default: std::cout << "[[" << get_string(iface.storage_class) << "]] "; break;
-                    }
-                    auto name = mod.get_name(id);
-                    std::cout << (name[0] ? name : "$unnamed") << " : " << type_printer{mod, mod.get_instruction(iface.ids[0]), 1} << std::endl;
-                }
-            }
+            std::cout << "\nEntry point " << e.name << "(...):\n";
+            for(auto & i : e.inputs) std::cout << "  layout(location = " << i.location << ") in " << i.name << " : " << i.interface_type << std::endl;
+            for(auto & i : e.outputs) std::cout << "  layout(location = " << i.location << ") out " << i.name << " : " << i.interface_type << std::endl;
         }
         std::cout << std::endl;
     }

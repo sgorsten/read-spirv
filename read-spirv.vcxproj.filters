@@ -3,9 +3,11 @@
   <ItemGroup>
     <ClCompile Include="read-spirv.cpp" />
     <ClCompile Include="spirv.cpp" />
+    <ClCompile Include="spirv-interface.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="spirv.h" />
+    <ClInclude Include="spirv-interface.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="test.vert" />
